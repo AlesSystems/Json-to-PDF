@@ -4,6 +4,10 @@ from pathlib import Path
 WORKFLOW = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
 
 
+def test_pull_requests_run_release_matrix() -> None:
+    assert "  pull_request:\n" in WORKFLOW
+
+
 def test_macos_build_composes_and_proves_universal2_artifact() -> None:
     assert 'lipo -archs "$(command -v python)"' in WORKFLOW
     ordered = [
