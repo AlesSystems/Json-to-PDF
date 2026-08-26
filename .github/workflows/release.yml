@@ -1,6 +1,7 @@
 name: Build standalone applications
 
 on:
+  pull_request:
   workflow_dispatch:
   push:
     tags: ["v*"]
