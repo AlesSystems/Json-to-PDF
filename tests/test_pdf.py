@@ -89,6 +89,34 @@ def test_strict_validation_rejects_corrupt_pdf(tmp_path) -> None:
         )
 
 
+def test_validation_normalizes_metadata_whitespace_and_compatibility_ligatures(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "metadata.pdf"
+    path.write_bytes(b"pdf-placeholder")
+
+    class Page:
+        def extract_text(self):
+            return "Final\treport\nSource:\tﬁle name.json"
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+        def __init__(self, stream, *, strict):
+            assert strict is True
+
+    monkeypatch.setattr("json_to_pdf.pdf.PdfReader", Reader)
+
+    result = validate_pdf(
+        path,
+        expected_title="Final report",
+        expected_source_name="file name.json",
+    )
+
+    assert result.extracted_text == ("Final\treport\nSource:\tﬁle name.json",)
+
+
 def _write_pages(path: Path, count: int, *, password: str | None = None) -> None:
     writer = PdfWriter()
     for _ in range(count):

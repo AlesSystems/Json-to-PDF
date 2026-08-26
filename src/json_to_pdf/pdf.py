@@ -1,5 +1,6 @@
 import os
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -40,6 +41,10 @@ class PdfValidationResult:
     extracted_text: tuple[str, ...]
 
 
+def _searchable_metadata(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).split())
+
+
 def validate_pdf(
     path: Path,
     *,
@@ -57,8 +62,11 @@ def validate_pdf(
             texts = tuple(page.extract_text() or "" for page in reader.pages)
             if any(not text.strip() for text in texts):
                 raise PdfValidationError()
-            combined = "\n".join(texts)
-            if expected_title not in combined or expected_source_name not in combined:
+            combined = _searchable_metadata("\n".join(texts))
+            if (
+                _searchable_metadata(expected_title) not in combined
+                or _searchable_metadata(expected_source_name) not in combined
+            ):
                 raise PdfValidationError()
     except PdfValidationError:
         raise

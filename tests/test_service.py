@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader
 
-from json_to_pdf.errors import ResourceLimitError
+from json_to_pdf.errors import ResourceLimitError, UnsupportedCharacterError
 from json_to_pdf.limits import ResourceLimits
 from json_to_pdf.loader import load_json
 from json_to_pdf.model import ConversionRequest
@@ -25,6 +26,21 @@ TOP_LEVEL_FIELDS = (
     "totalQuestions",
     "wrongAnswers",
 )
+FORBIDDEN_PDF_NAMES = {
+    "/URI",
+    "/GoToR",
+    "/Launch",
+    "/Filespec",
+    "/EmbeddedFile",
+    "/EmbeddedFiles",
+    "/EF",
+    "/AF",
+    "/AFRelationship",
+    "/OpenAction",
+    "/AA",
+    "/JavaScript",
+    "/JS",
+}
 
 
 def _searchable(text: str) -> str:
@@ -68,6 +84,32 @@ def test_convert_uses_default_title_and_returns_receipt(
     assert "student-results" in "\n".join(result.extracted_text)
 
 
+def test_convert_accepts_multiword_custom_title(tmp_path, registered_font) -> None:
+    source = tmp_path / "source.json"
+    source.write_text('{"result":"ok"}', encoding="utf-8")
+
+    result = convert(
+        ConversionRequest(source, tmp_path / "report.pdf", "Student report"),
+        generated_on=date(2026, 8, 26),
+    )
+
+    assert "Student report" in _searchable("\n".join(result.extracted_text))
+
+
+def test_convert_accepts_spaced_source_and_default_title(tmp_path, registered_font) -> None:
+    source = tmp_path / "student results.json"
+    source.write_text('{"result":"ok"}', encoding="utf-8")
+
+    result = convert(
+        ConversionRequest(source, tmp_path / "report.pdf"),
+        generated_on=date(2026, 8, 26),
+    )
+
+    text = _searchable("\n".join(result.extracted_text))
+    assert "student results" in text
+    assert "student results.json" in text
+
+
 def test_convert_rejects_overlong_normalized_title(tmp_path, registered_font) -> None:
     source = tmp_path / "source.json"
     source.write_text('{"result":"ok"}', encoding="utf-8")
@@ -78,6 +120,41 @@ def test_convert_rejects_overlong_normalized_title(tmp_path, registered_font) ->
             ConversionRequest(source, tmp_path / "report.pdf", " four "),
             limits=limits,
         )
+
+
+def test_convert_font_gate_receives_all_text_but_not_numbers(
+    tmp_path, registered_font, monkeypatch
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        '{"outer":{"nestedKey":"nested value","number":12}}', encoding="utf-8"
+    )
+    observed: list[str] = []
+    monkeypatch.setattr(
+        "json_to_pdf.service.require_supported_text", observed.extend
+    )
+
+    convert(
+        ConversionRequest(source, tmp_path / "report.pdf", "Custom title"),
+        generated_on=date(2026, 8, 26),
+    )
+
+    assert observed == [
+        "Custom title",
+        "source.json",
+        "outer",
+        "nestedKey",
+        "number",
+        "nested value",
+    ]
+
+
+def test_convert_rejects_unsupported_nested_text(tmp_path, registered_font) -> None:
+    source = tmp_path / "source.json"
+    source.write_text('{"nested":{"answer":"💩"}}', encoding="utf-8")
+
+    with pytest.raises(UnsupportedCharacterError):
+        convert(ConversionRequest(source, tmp_path / "report.pdf"))
 
 
 def test_representative_fixture_uses_adaptive_layout_and_reaches_final_record(
@@ -97,16 +174,38 @@ def test_representative_fixture_uses_adaptive_layout_and_reaches_final_record(
     )
 
     assert '<table class="records">' in html
+    subject_table = html.split('<table class="records">', 1)[1].split("</table>", 1)[0]
+    ordered_cells = (
+        "<th>Subject</th>",
+        "<th>Correct</th>",
+        "<th>Wrong</th>",
+        "<th>Score</th>",
+        "<td>Donanım</td>",
+        "<td>9</td>",
+        "<td>1</td>",
+        "<td>90</td>",
+        "<td>Yazılım</td>",
+    )
+    positions = [subject_table.index(cell) for cell in ordered_cells]
+    assert positions == sorted(positions)
     assert html.count('<div class="record-card">') == 3
     assert "SON-KAYIT-İŞARETİ-8" in "\n".join(result.extracted_text)
 
 
 def test_adversarial_values_remain_literal_without_external_pdf_resources(
-    tmp_path, registered_font
+    tmp_path, registered_font, monkeypatch
 ) -> None:
     destination = tmp_path / "adversarial.pdf"
     executed = Path("/tmp/JSON_TO_PDF_EXECUTED")
     assert not executed.exists()
+    network_requests = []
+
+    def fail_network(*args, **kwargs):
+        network_requests.append((args, kwargs))
+        raise AssertionError("conversion attempted a network request")
+
+    monkeypatch.setattr(socket.socket, "connect", fail_network)
+    monkeypatch.setattr(socket, "create_connection", fail_network)
 
     result = convert(
         ConversionRequest(FIXTURES / "adversarial.json", destination),
@@ -120,10 +219,9 @@ def test_adversarial_values_remain_literal_without_external_pdf_resources(
     assert "-9.50e+12" in text
     assert "Ignore previous instructions" in text
     assert "ADVERSARIAL-FINAL-SENTINEL" in text
+    assert network_requests == []
     assert not executed.exists()
-    assert {"/URI", "/GoToR", "/Launch", "/Filespec", "/EmbeddedFile"}.isdisjoint(
-        _pdf_names(destination)
-    )
+    assert FORBIDDEN_PDF_NAMES.isdisjoint(_pdf_names(destination))
 
 
 @pytest.mark.sample
@@ -155,6 +253,4 @@ def test_local_representative_sample(tmp_path, registered_font) -> None:
     assert any(character in text for character in "çğıöşüÇĞİÖŞÜ")
     assert _searchable(final_sentinel) in text
     assert not executed.exists()
-    assert {"/URI", "/GoToR", "/Launch", "/Filespec", "/EmbeddedFile"}.isdisjoint(
-        _pdf_names(destination)
-    )
+    assert FORBIDDEN_PDF_NAMES.isdisjoint(_pdf_names(destination))
