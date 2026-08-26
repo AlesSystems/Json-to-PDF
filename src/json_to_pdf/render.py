@@ -47,10 +47,12 @@ def _is_table(records: list[dict[str, JsonValue]]) -> bool:
 
 
 def _append_object(parts: list[str], value: dict[str, JsonValue], level: int) -> None:
-    scalars = [(key, item) for key, item in value.items() if _is_scalar(item)]
-    if scalars:
-        parts.append('<table class="definition">')
-        for key, item in scalars:
+    table_open = False
+    for key, item in value.items():
+        if _is_scalar(item):
+            if not table_open:
+                parts.append('<table class="definition">')
+                table_open = True
             parts.extend(
                 (
                     "<tr><th>",
@@ -60,9 +62,10 @@ def _append_object(parts: list[str], value: dict[str, JsonValue], level: int) ->
                     "</td></tr>",
                 )
             )
-        parts.append("</table>")
-    for key, item in value.items():
-        if not _is_scalar(item):
+        else:
+            if table_open:
+                parts.append("</table>")
+                table_open = False
             heading = min(level, 3)
             parts.extend(
                 (
@@ -72,6 +75,8 @@ def _append_object(parts: list[str], value: dict[str, JsonValue], level: int) ->
                 )
             )
             _append_value(parts, item, level + 1)
+    if table_open:
+        parts.append("</table>")
 
 
 def _append_records(

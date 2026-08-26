@@ -39,6 +39,14 @@ def test_renders_scalar_object_fields_as_definition_rows_in_source_order() -> No
     assert "9.50e+1" in html
 
 
+def test_interleaves_nested_and_scalar_fields_in_source_order() -> None:
+    html = render_html(
+        {"details": {"name": "Ece"}, "score": JsonNumber("10")}, CTX
+    )
+    assert html.index("Details") < html.index("Ece") < html.index("Score")
+    assert html.index("Score") < html.index("<td>10</td>")
+
+
 def test_four_columns_are_a_table_and_five_columns_are_cards() -> None:
     four = render_html([{"a": "1", "b": "2", "c": "3", "d": "4"}], CTX)
     five = render_html(
