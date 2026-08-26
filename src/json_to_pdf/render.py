@@ -139,7 +139,8 @@ def render_html(
 ) -> str:
     parts = [
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>",
-        f"body {{ font-family: '{FONT_FAMILY}'; font-size: 10pt; color: #202124; }}",
+        f"body {{ font-family: '{FONT_FAMILY}'; font-size: 10pt; "
+        "line-height: 135%; color: #202124; }}",
         "h1 { font-size: 20pt; } h2 { font-size: 15pt; } h3 { font-size: 12pt; }",
         "table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }",
         "th, td { border: 1px solid #c7c7c7; padding: 5px; vertical-align: top; }",

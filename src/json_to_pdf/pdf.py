@@ -74,7 +74,7 @@ def _paint_document(
     painter = QPainter()
     if not painter.begin(printer):
         raise RenderError()
-    painter.setFont(QFont("Helvetica", 10))
+    painter.setFont(QFont(FONT_FAMILY, 10))
     for index in range(pages):
         painter.save()
         painter.translate(body.left(), body.top())
@@ -91,7 +91,8 @@ def _paint_document(
             f"Page {index + 1} of {pages}",
         )
         if index + 1 < pages and not printer.newPage():
-            painter.end()
+            if not painter.end():
+                raise RenderError()
             raise RenderError()
     if not painter.end():
         raise RenderError()

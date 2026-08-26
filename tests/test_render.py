@@ -138,3 +138,4 @@ def test_document_has_one_title_and_uses_the_bundled_font() -> None:
     html = render_html({"result": "ok"}, CTX)
     assert html.count("<h1>") == 1
     assert "font-family: 'Noto Sans'" in html
+    assert "line-height: 135%" in html
