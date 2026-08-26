@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QSize
 from PySide6.QtPdf import QPdfDocument
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 
 from json_to_pdf.errors import OutputWriteError, PdfValidationError, RenderError
 from json_to_pdf.limits import ResourceLimits
@@ -186,36 +186,80 @@ def test_replacement_failure_preserves_destination_and_cleans_temp(
     assert list(tmp_path.glob(".*.tmp.pdf")) == []
 
 
-def test_generated_pdf_embeds_font_has_no_annotations_and_rasterizes_nonblank(
-    tmp_path, valid_html, metadata, registered_font
+def _walk_pdf_objects(root):
+    pending = [root]
+    seen = set()
+    while pending:
+        value = pending.pop()
+        if hasattr(value, "idnum"):
+            identity = (value.idnum, value.generation)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            value = value.get_object()
+        yield value
+        if isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+
+
+def _font_descriptors(font):
+    font = font.get_object()
+    descriptor = font.get("/FontDescriptor")
+    if descriptor:
+        yield font, descriptor.get_object()
+    for descendant in font.get("/DescendantFonts", []):
+        yield from _font_descriptors(descendant)
+
+
+def test_generated_pdf_embeds_noto_font_has_no_external_resources_and_rasterizes_every_page(
+    tmp_path, metadata, registered_font
 ) -> None:
     destination = tmp_path / "quality.pdf"
-    result = write_pdf_atomic(valid_html, destination, metadata)
-
-    from pypdf import PdfReader
+    html = (
+        "<h1>Title</h1><p>Source: source.json</p>"
+        "<p>https://example.invalid/path</p>"
+        "<p>&lt;img src=&quot;file:///private/sentinel&quot;&gt;</p>"
+        + "<p>Başarılı multi-page body.</p>" * 900
+    )
+    result = write_pdf_atomic(html, destination, metadata)
 
     reader = PdfReader(destination, strict=True)
-    embedded = False
+    embedded_noto = []
     for page in reader.pages:
-        annotations = page.get("/Annots")
-        assert annotations is None or not annotations.get_object()
         fonts = page["/Resources"]["/Font"].get_object().values()
         for font_reference in fonts:
-            font = font_reference.get_object()
-            descendants = font.get("/DescendantFonts", [])
-            descriptor = font.get("/FontDescriptor")
-            if descendants:
-                descriptor = descendants[0].get_object().get("/FontDescriptor")
-            if descriptor:
-                descriptor = descriptor.get_object()
-                embedded |= any(
+            for font, descriptor in _font_descriptors(font_reference):
+                if any(
                     key in descriptor for key in ("/FontFile", "/FontFile2", "/FontFile3")
-                )
-    assert embedded
+                ):
+                    font_name = str(descriptor.get("/FontName", ""))
+                    base_font = str(font.get("/BaseFont", ""))
+                    assert "NotoSans" in font_name
+                    assert "NotoSans" in base_font
+                    embedded_noto.append((font_name, base_font))
+    assert embedded_noto
+
+    forbidden = {
+        "/URI",
+        "/GoToR",
+        "/Launch",
+        "/Filespec",
+        "/EmbeddedFile",
+        "/EmbeddedFiles",
+        "/EF",
+        "/AF",
+        "/AFRelationship",
+    }
+    graph = list(_walk_pdf_objects(reader.trailer["/Root"]))
+    assert forbidden.isdisjoint({str(value) for value in graph})
 
     document = QPdfDocument()
     assert document.load(str(destination)) == QPdfDocument.Error.None_
-    assert document.pageCount() == result.page_count
+    assert document.pageCount() == result.page_count > 1
+    rendered_indexes = []
     for index in range(document.pageCount()):
         image = document.render(index, QSize(595, 842))
         assert not image.isNull()
@@ -225,6 +269,9 @@ def test_generated_pdf_embeds_font_has_no_annotations_and_rasterizes_nonblank(
             for y in range(0, body.height(), 4)
             for x in range(0, body.width(), 4)
         )
+        rendered_indexes.append(index)
+    assert rendered_indexes == list(range(result.page_count))
+    assert rendered_indexes[-1] > 0
     document.close()
 
 
@@ -253,33 +300,43 @@ def test_unwritable_destination_directory_is_typed(
         directory.chmod(0o700)
 
 
-def test_close_failure_cleans_created_temp_and_is_typed(
+def test_close_failure_retries_descriptor_close_and_cleans_temp(
     tmp_path, valid_html, metadata, monkeypatch
 ) -> None:
     destination = tmp_path / "report.pdf"
     destination.write_bytes(b"prior-pdf")
     real_close = os.close
+    observed_fd = None
+    calls = 0
 
-    def fail_after_close(fd):
+    def fail_before_close_once(fd):
+        nonlocal calls, observed_fd
+        calls += 1
+        observed_fd = fd
+        if calls == 1:
+            raise OSError("PRIVATE-close-sentinel")
         real_close(fd)
-        raise OSError("PRIVATE-close-sentinel")
 
-    monkeypatch.setattr("json_to_pdf.pdf.os.close", fail_after_close)
+    monkeypatch.setattr("json_to_pdf.pdf.os.close", fail_before_close_once)
     with pytest.raises(OutputWriteError) as caught:
         write_pdf_atomic(valid_html, destination, metadata)
     assert "PRIVATE-close-sentinel" not in str(caught.value)
+    assert calls == 2
+    with pytest.raises(OSError):
+        os.fstat(observed_fd)
     assert destination.read_bytes() == b"prior-pdf"
     assert list(tmp_path.glob(".*.tmp.pdf")) == []
 
 
-def test_cleanup_failure_is_typed_and_preserves_destination(
-    tmp_path, valid_html, metadata, monkeypatch
+@pytest.mark.parametrize("error_type", [RenderError, PdfValidationError])
+def test_transient_cleanup_failure_preserves_original_conversion_error(
+    tmp_path, valid_html, metadata, monkeypatch, error_type
 ) -> None:
     destination = tmp_path / "report.pdf"
     destination.write_bytes(b"prior-pdf")
     monkeypatch.setattr(
         "json_to_pdf.pdf._paint_document",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RenderError()),
+        lambda *args, **kwargs: (_ for _ in ()).throw(error_type()),
     )
     original_unlink = Path.unlink
     failed_once = False
@@ -292,10 +349,37 @@ def test_cleanup_failure_is_typed_and_preserves_destination(
         return original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_once)
-    with pytest.raises(OutputWriteError) as caught:
+    with pytest.raises(error_type):
         write_pdf_atomic(valid_html, destination, metadata)
-    assert "PRIVATE-cleanup-sentinel" not in str(caught.value)
     assert destination.read_bytes() == b"prior-pdf"
+    assert list(tmp_path.glob(".*.tmp.pdf")) == []
+
+
+def test_permanent_cleanup_refusal_is_redacted_and_exposes_residual_temp(
+    tmp_path, valid_html, metadata, monkeypatch
+) -> None:
+    destination = tmp_path / "report.pdf"
+    destination.write_bytes(b"prior-pdf")
+    monkeypatch.setattr(
+        "json_to_pdf.pdf._paint_document",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RenderError()),
+    )
+    original_unlink = Path.unlink
+
+    with monkeypatch.context() as cleanup_patch:
+        def refuse_cleanup(path, *args, **kwargs):
+            if path.name.endswith(".tmp.pdf"):
+                raise OSError("PRIVATE-permanent-cleanup-sentinel")
+            return original_unlink(path, *args, **kwargs)
+
+        cleanup_patch.setattr(Path, "unlink", refuse_cleanup)
+        with pytest.raises(OutputWriteError) as caught:
+            write_pdf_atomic(valid_html, destination, metadata)
+    residual = list(tmp_path.glob(".*.tmp.pdf"))
+    assert "PRIVATE-permanent-cleanup-sentinel" not in str(caught.value)
+    assert destination.read_bytes() == b"prior-pdf"
+    assert len(residual) == 1
+    residual[0].unlink()
     assert list(tmp_path.glob(".*.tmp.pdf")) == []
 
 

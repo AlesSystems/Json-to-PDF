@@ -81,7 +81,11 @@ def write_pdf_atomic(
             dir=destination.parent,
         )
         temp = Path(temp_name)
-        os.close(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            os.close(fd)
+            raise
     except OSError as error:
         if temp is not None:
             _unlink_temp(temp)
@@ -113,8 +117,7 @@ def _unlink_temp(temp: Path) -> None:
         try:
             temp.unlink()
         except OSError:
-            pass
-        raise OutputWriteError(cause=error) from error
+            raise OutputWriteError(cause=error) from error
 
 
 def _paint_document(
