@@ -229,6 +229,8 @@ def test_generated_pdf_embeds_noto_font_has_no_external_resources_and_rasterizes
     reader = PdfReader(destination, strict=True)
     embedded_noto = []
     for page in reader.pages:
+        annotations = page.get("/Annots")
+        assert annotations is None or not annotations.get_object()
         fonts = page["/Resources"]["/Font"].get_object().values()
         for font_reference in fonts:
             for font, descriptor in _font_descriptors(font_reference):
