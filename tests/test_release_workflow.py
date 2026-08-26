@@ -8,6 +8,13 @@ def test_pull_requests_run_release_matrix() -> None:
     assert "  pull_request:\n" in WORKFLOW
 
 
+def test_codex_branch_push_bootstraps_release_matrix_without_removing_triggers() -> None:
+    assert '    branches: ["codex/**"]\n' in WORKFLOW
+    assert '    tags: ["v*"]\n' in WORKFLOW
+    assert "  pull_request:\n" in WORKFLOW
+    assert "  workflow_dispatch:\n" in WORKFLOW
+
+
 def test_macos_build_composes_and_proves_universal2_artifact() -> None:
     assert 'lipo -archs "$(command -v python)"' in WORKFLOW
     ordered = [
