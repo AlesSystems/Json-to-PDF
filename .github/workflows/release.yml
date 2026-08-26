@@ -33,7 +33,60 @@ jobs:
       - name: Compile sources
         run: python -m compileall -q src tests
       - name: Build standalone application
-        run: pyside6-deploy -c pysidedeploy.spec
+        run: |
+          if [[ "$RUNNER_OS" != "macOS" ]]; then
+            pyside6-deploy -c pysidedeploy.spec
+            exit
+          fi
+
+          python_archs="$(lipo -archs "$(command -v python)")"
+          grep -qw arm64 <<< "$python_archs"
+          grep -qw x86_64 <<< "$python_archs"
+          arch -arm64 python -c "import platform; assert platform.machine() == 'arm64'"
+          arch -x86_64 python -c "import platform; assert platform.machine() == 'x86_64'"
+          cp pysidedeploy.spec "$RUNNER_TEMP/pysidedeploy.spec"
+
+          arch -arm64 pyside6-deploy -c pysidedeploy.spec
+          test -d dist/json-to-pdf.app
+          mv dist/json-to-pdf.app dist/json-to-pdf-arm64.app
+          cp "$RUNNER_TEMP/pysidedeploy.spec" pysidedeploy.spec
+
+          arch -x86_64 pyside6-deploy -c pysidedeploy.spec
+          test -d dist/json-to-pdf.app
+          mv dist/json-to-pdf.app dist/json-to-pdf-x86_64.app
+          cp -R dist/json-to-pdf-arm64.app dist/json-to-pdf.app
+          while IFS= read -r -d '' arm_file; do
+            file "$arm_file" | grep -q 'Mach-O' || continue
+            relative="${arm_file#dist/json-to-pdf-arm64.app/}"
+            x86_file="dist/json-to-pdf-x86_64.app/$relative"
+            output_file="dist/json-to-pdf.app/$relative"
+            arm_archs="$(lipo -archs "$arm_file")"
+            grep -qw arm64 <<< "$arm_archs"
+            if grep -qw x86_64 <<< "$arm_archs"; then
+              continue
+            fi
+            test -f "$x86_file"
+            lipo -archs "$x86_file" | grep -qw x86_64
+            lipo -create "$arm_file" "$x86_file" -output "$output_file"
+          done < <(find dist/json-to-pdf-arm64.app -type f -print0)
+      - name: Normalize and verify macOS signature
+        if: runner.os == 'macOS'
+        run: |
+          xattr -cr dist/json-to-pdf.app
+          xattr -d com.apple.FinderInfo dist/json-to-pdf.app 2>/dev/null || true
+          codesign --force --deep --sign - dist/json-to-pdf.app
+          xattr -d com.apple.FinderInfo dist/json-to-pdf.app 2>/dev/null || true
+          codesign --verify --deep --strict dist/json-to-pdf.app
+      - name: Verify universal2 macOS artifact
+        if: runner.os == 'macOS'
+        run: |
+          while IFS= read -r -d '' file; do
+            if file "$file" | grep -q 'Mach-O'; then
+              archs="$(lipo -archs "$file")"
+              grep -qw arm64 <<< "$archs"
+              grep -qw x86_64 <<< "$archs"
+            fi
+          done < <(find dist/json-to-pdf.app -type f -print0)
       - name: Locate packaged executable
         id: executable
         run: |
