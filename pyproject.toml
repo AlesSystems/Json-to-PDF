@@ -14,3 +14,4 @@ dev = ["pytest==9.1.1", "pytest-qt==4.5.0", "Nuitka==4.1.1"]
 [tool.pytest.ini_options]
 qt_api = "pyside6"
 testpaths = ["tests"]
+pythonpath = ["src"]
