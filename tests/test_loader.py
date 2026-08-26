@@ -36,6 +36,18 @@ def test_rejects_nonstandard_numbers(tmp_path: Path, token: str) -> None:
         load_json(source)
 
 
+def test_rejects_duplicate_object_names_without_exposing_name(tmp_path: Path) -> None:
+    source = tmp_path / "duplicates.json"
+    source.write_text(
+        '{"secret-value":"too-long-value","secret-value":"ok"}', encoding="utf-8"
+    )
+
+    with pytest.raises(PolicyError) as caught:
+        load_json(source, ResourceLimits(max_string_chars=12))
+
+    assert "secret-value" not in str(caught.value)
+
+
 @pytest.mark.parametrize("payload", ["1", '"text"', "true", "null", "{}", "[]"])
 def test_rejects_scalar_and_empty_roots(tmp_path: Path, payload: str) -> None:
     source = tmp_path / "root.json"
@@ -74,6 +86,18 @@ def test_rejects_extreme_depth_without_exposing_parser_recursion(
 
     with pytest.raises(ResourceLimitError):
         load_json(source)
+
+
+def test_does_not_misclassify_decoder_ceiling_as_configured_depth_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "decoder-ceiling.json"
+    source.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")
+
+    with pytest.raises(InvalidJsonError) as caught:
+        load_json(source, ResourceLimits(max_depth=10_000))
+
+    assert "recursion" not in str(caught.value).lower()
 
 
 def test_accepts_node_count_at_limit_and_rejects_one_node_over(
@@ -159,6 +183,15 @@ def test_redacts_missing_input_path(tmp_path: Path) -> None:
         load_json(source)
 
     assert "/secret/path" not in str(caught.value)
+    assert "secret-value" not in str(caught.value)
+
+
+def test_redacts_malformed_path(tmp_path: Path) -> None:
+    source = tmp_path / "secret-value\0.json"
+
+    with pytest.raises(InputReadError) as caught:
+        load_json(source)
+
     assert "secret-value" not in str(caught.value)
 
 
