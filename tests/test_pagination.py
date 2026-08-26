@@ -2,11 +2,20 @@ import re
 from datetime import date
 
 import pytest
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QMarginsF, QRectF
+from PySide6.QtGui import (
+    QFont,
+    QPageLayout,
+    QPageSize,
+    QPainter,
+    QTextDocument,
+    QTextOption,
+)
 from PySide6.QtPrintSupport import QPrinter
 from pypdf import PdfReader
 
 from json_to_pdf.errors import RenderError, ResourceLimitError
+from json_to_pdf.font import FONT_FAMILY
 from json_to_pdf.limits import ResourceLimits
 from json_to_pdf.pdf import PdfMetadata, _paint_document
 from json_to_pdf.render import RenderContext, render_html
@@ -22,6 +31,33 @@ def _read(output):
 
 def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", text)
+
+
+def _measure_pages(html: str) -> tuple[int, float, QRectF]:
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    printer.setResolution(72)
+    printer.setPageLayout(
+        QPageLayout(
+            QPageSize(QPageSize.PageSizeId.A4),
+            QPageLayout.Orientation.Portrait,
+            QMarginsF(18, 18, 18, 18),
+            QPageLayout.Unit.Millimeter,
+        )
+    )
+    paint = printer.pageLayout().paintRectPixels(printer.resolution())
+    body_height = paint.height() - 10 * printer.resolution() / 25.4
+    document = QTextDocument()
+    document.setDefaultFont(QFont(FONT_FAMILY, 10))
+    option = document.defaultTextOption()
+    option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    document.setDefaultTextOption(option)
+    document.setDocumentMargin(0)
+    document.setHtml(html)
+    document.documentLayout().setPaintDevice(printer)
+    document.setPageSize(QRectF(0, 0, paint.width(), body_height).size())
+    document.documentLayout().documentSize()
+    last_block = document.documentLayout().blockBoundingRect(document.lastBlock())
+    return document.pageCount(), body_height, last_block
 
 
 def test_footer_pagination_has_no_extra_page(tmp_path, registered_font) -> None:
@@ -142,20 +178,33 @@ def test_adversarial_content_reaches_last_page_without_blank_page(
     assert "LAST-EDGE" in text[-1]
 
 
-def test_last_page_continuation_does_not_append_footer_only_page(
+def test_measured_exact_last_page_boundary_has_no_trailing_page(
     tmp_path, registered_font
 ) -> None:
     output = tmp_path / "boundary.pdf"
-    html = (
-        "<p>FIRST-BOUNDARY</p>"
-        + "<p>boundary row</p>" * 61
-        + "<p>LAST-BOUNDARY</p>"
-    )
-    count = _paint_document(html, output, METADATA)
+    previous = ""
+    for rows in range(100):
+        candidate = (
+            "<style>p { margin: 0; }</style><p>FIRST-BOUNDARY</p>"
+            + "<p>boundary row</p>" * rows
+            + "<p>LAST-BOUNDARY</p>"
+        )
+        if _measure_pages(candidate)[0] > 1:
+            break
+        previous = candidate
+    else:
+        pytest.fail("Qt layout did not reach the page boundary")
+
+    pages, body_height, last_block = _measure_pages(previous)
+    next_pages, _, _ = _measure_pages(candidate)
+    assert pages == 1 and next_pages == 2
+    assert 0 <= body_height - last_block.bottom() < last_block.height()
+
+    count = _paint_document(previous, output, METADATA)
     reader, text = _read(output)
-    assert len(reader.pages) == count
+    assert len(reader.pages) == count == 1
     assert "LAST-BOUNDARY" in text[-1]
-    assert text[-1].strip() != f"Page {count} of {count}"
+    assert _normalized(text[-1]).count("Page 1 of 1") == 1
 
 
 def test_rejects_document_over_page_limit(tmp_path, registered_font) -> None:
