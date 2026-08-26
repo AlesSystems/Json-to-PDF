@@ -1,3 +1,5 @@
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -12,8 +14,15 @@ from PySide6.QtGui import (
     QTextOption,
 )
 from PySide6.QtPrintSupport import QPrinter
+from pypdf import PdfReader
 
-from .errors import RenderError, ResourceLimitError
+from .errors import (
+    ConversionError,
+    OutputWriteError,
+    PdfValidationError,
+    RenderError,
+    ResourceLimitError,
+)
 from .font import FONT_FAMILY
 from .limits import DEFAULT_LIMITS, ResourceLimits
 
@@ -23,6 +32,89 @@ class PdfMetadata:
     title: str
     source_name: str
     generated_on: date
+
+
+@dataclass(frozen=True)
+class PdfValidationResult:
+    page_count: int
+    extracted_text: tuple[str, ...]
+
+
+def validate_pdf(
+    path: Path,
+    *,
+    expected_title: str,
+    expected_source_name: str,
+    limits: ResourceLimits = DEFAULT_LIMITS,
+) -> PdfValidationResult:
+    try:
+        if path.stat().st_size > limits.max_pdf_bytes:
+            raise PdfValidationError()
+        with path.open("rb") as stream:
+            reader = PdfReader(stream, strict=True)
+            if reader.is_encrypted or not 1 <= len(reader.pages) <= limits.max_pages:
+                raise PdfValidationError()
+            texts = tuple(page.extract_text() or "" for page in reader.pages)
+            if any(not text.strip() for text in texts):
+                raise PdfValidationError()
+            combined = "\n".join(texts)
+            if expected_title not in combined or expected_source_name not in combined:
+                raise PdfValidationError()
+    except PdfValidationError:
+        raise
+    except Exception as error:
+        raise PdfValidationError(cause=error) from error
+    return PdfValidationResult(len(texts), texts)
+
+
+def write_pdf_atomic(
+    html_text: str,
+    destination: Path,
+    metadata: PdfMetadata,
+    limits: ResourceLimits = DEFAULT_LIMITS,
+) -> PdfValidationResult:
+    temp = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp.pdf",
+            dir=destination.parent,
+        )
+        temp = Path(temp_name)
+        os.close(fd)
+    except OSError as error:
+        if temp is not None:
+            _unlink_temp(temp)
+        raise OutputWriteError(cause=error) from error
+    try:
+        _paint_document(html_text, temp, metadata, limits)
+        result = validate_pdf(
+            temp,
+            expected_title=metadata.title,
+            expected_source_name=metadata.source_name,
+            limits=limits,
+        )
+        os.replace(temp, destination)
+        return result
+    except ConversionError:
+        raise
+    except OSError as error:
+        raise OutputWriteError(cause=error) from error
+    finally:
+        _unlink_temp(temp)
+
+
+def _unlink_temp(temp: Path) -> None:
+    if not temp.exists():
+        return
+    try:
+        temp.unlink()
+    except OSError as error:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+        raise OutputWriteError(cause=error) from error
 
 
 def _paint_document(
