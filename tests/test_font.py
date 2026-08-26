@@ -2,7 +2,9 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from PySide6.QtGui import QRawFont
 
+from json_to_pdf import font as font_module
 from json_to_pdf.errors import UnsupportedCharacterError
 from json_to_pdf.font import register_bundled_font, require_supported_text
 
@@ -28,3 +30,20 @@ def test_unsupported_character_is_rejected(qapp) -> None:
     register_bundled_font()
     with pytest.raises(UnsupportedCharacterError, match="U\\+"):
         require_supported_text(["\U0001F9EA"])
+
+
+def test_bidi_override_control_is_rejected(qapp) -> None:
+    register_bundled_font()
+    with pytest.raises(UnsupportedCharacterError, match="U\\+202E"):
+        require_supported_text(["\u202e"])
+
+
+def test_failed_registration_leaves_font_unregistered(qapp, monkeypatch) -> None:
+    register_bundled_font()
+    monkeypatch.setattr(font_module, "QRawFont", lambda *_: QRawFont())
+
+    with pytest.raises(RuntimeError, match="could not be loaded"):
+        register_bundled_font()
+
+    with pytest.raises(RuntimeError, match="is not registered"):
+        require_supported_text(["A"])
