@@ -2,7 +2,7 @@
 
 ## Status
 
-**Planning status:** reviewed and revised; no product code has been written.
+**Implementation status:** implemented and reviewed; release acceptance gates remain.
 
 This design is for a small, offline desktop application that converts one JSON file into a readable, searchable PDF for students. The renderer is generic: `/Users/altanesmer/Desktop/bilisim_questions.json` is representative data, not a schema contract, and every value inside it is treated only as untrusted data.
 

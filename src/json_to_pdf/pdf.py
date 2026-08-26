@@ -151,13 +151,13 @@ def _paint_document(
     mm = printer.resolution() / 25.4
     footer_height, footer_gap = 7 * mm, 3 * mm
     body = QRectF(
-        paint.left(),
-        paint.top(),
+        0,
+        0,
         paint.width(),
         paint.height() - footer_height - footer_gap,
     )
     footer = QRectF(
-        paint.left(), body.bottom() + footer_gap, paint.width(), footer_height
+        0, body.bottom() + footer_gap, paint.width(), footer_height
     )
 
     document = QTextDocument()

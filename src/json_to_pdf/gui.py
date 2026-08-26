@@ -40,8 +40,8 @@ class ConversionWorker(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
         self.setWindowTitle("JSON to PDF")
         self._thread: QThread | None = None
         self._worker: ConversionWorker | None = None

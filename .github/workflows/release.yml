@@ -105,3 +105,47 @@ jobs:
       - name: Validate packaged PDF
         run: >-
           python -c "from pypdf import PdfReader; r=PdfReader('packaged-report.pdf', strict=True); assert len(r.pages)>0; assert 'Başarılı' in ''.join(p.extract_text() or '' for p in r.pages)"
+      - name: Archive validated application
+        id: archive
+        env:
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            artifact_root="dist/json-to-pdf.app"
+            archive="json-to-pdf-macos-universal2.tar.gz"
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            artifact_root="$(dirname "$EXECUTABLE_PATH")"
+            archive="json-to-pdf-windows-x86_64.zip"
+          else
+            artifact_root="$(dirname "$EXECUTABLE_PATH")"
+            archive="json-to-pdf-linux-x86_64.tar.gz"
+          fi
+          test -d "$artifact_root"
+          parent="$(dirname "$artifact_root")"
+          leaf="$(basename "$artifact_root")"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tar -a -c -f "$archive" -C "$parent" "$leaf"
+          else
+            tar -czf "$archive" -C "$parent" "$leaf"
+          fi
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+      - name: Create SHA-256 manifest
+        env:
+          ARCHIVE_PATH: ${{ steps.archive.outputs.path }}
+        run: |
+          python -c "import hashlib, os, pathlib; p=pathlib.Path(os.environ['ARCHIVE_PATH']); pathlib.Path('artifact-sha256.txt').write_text(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n', encoding='ascii')"
+          {
+            echo "### Packaged artifact receipt"
+            echo '```text'
+            cat artifact-sha256.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload packaged artifact and validation receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-to-pdf-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ steps.archive.outputs.path }}
+            artifact-sha256.txt
+            packaged-report.pdf
+          if-no-files-found: error

@@ -1,7 +1,8 @@
+import os
 from collections.abc import Iterable
 from datetime import date
 
-from .errors import ResourceLimitError
+from .errors import PolicyError, ResourceLimitError
 from .font import require_supported_text
 from .limits import DEFAULT_LIMITS, ResourceLimits
 from .loader import load_json
@@ -16,6 +17,17 @@ def convert(
     limits: ResourceLimits = DEFAULT_LIMITS,
     generated_on: date | None = None,
 ) -> PdfValidationResult:
+    source = request.source.resolve(strict=False)
+    destination = request.destination.resolve(strict=False)
+    if source == destination:
+        raise PolicyError()
+    try:
+        if source.exists() and destination.exists() and os.path.samefile(
+            source, destination
+        ):
+            raise PolicyError()
+    except OSError:
+        pass
     document = load_json(request.source, limits)
     title = (
         request.title.strip()

@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from hashlib import sha256
 from importlib.resources import files
 from unicodedata import category
 
@@ -7,6 +8,7 @@ from PySide6.QtGui import QFontDatabase, QRawFont
 from .errors import UnsupportedCharacterError
 
 FONT_FAMILY = "Noto Sans"
+FONT_SHA256 = "bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d"
 _raw_font: QRawFont | None = None
 
 
@@ -14,6 +16,13 @@ def register_bundled_font() -> str:
     global _raw_font
     _raw_font = None
     path = files("json_to_pdf").joinpath("assets/fonts/NotoSans[wdth,wght].ttf")
+    try:
+        if sha256(path.read_bytes()).hexdigest() != FONT_SHA256:
+            raise RuntimeError("The bundled report font could not be loaded.")
+    except RuntimeError:
+        raise
+    except (OSError, TypeError) as error:
+        raise RuntimeError("The bundled report font could not be loaded.") from error
     font_id = QFontDatabase.addApplicationFont(str(path))
     families = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
     if FONT_FAMILY not in families:
