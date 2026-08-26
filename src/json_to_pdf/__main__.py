@@ -13,6 +13,10 @@ from .service import convert
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv if argv is None else argv)
+    if "--smoke-convert" in arguments and (
+        len(arguments) != 4 or arguments[1] != "--smoke-convert"
+    ):
+        return 2
     app = QApplication.instance() or QApplication(arguments)
     register_bundled_font()
     if len(arguments) == 4 and arguments[1] == "--smoke-convert":

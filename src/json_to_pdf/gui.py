@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .errors import ConversionError
+from .errors import ConversionError, OutputWriteError
 from .model import ConversionRequest
 from .pdf import PdfValidationResult
 from .service import convert
@@ -163,25 +163,35 @@ class MainWindow(QMainWindow):
 
     @Slot(PdfValidationResult)
     def _conversion_succeeded(self, result: PdfValidationResult) -> None:
-        self.generate_button.setEnabled(True)
         self.open_button.setEnabled(True)
         self.status_label.setText("PDF generated successfully.")
 
     @Slot(ConversionError)
     def _conversion_failed(self, error: ConversionError) -> None:
-        self.generate_button.setEnabled(True)
         self.open_button.setEnabled(False)
         self.status_label.setText("Conversion failed.")
+        guidance = (
+            "Choose a writable PDF destination and try again."
+            if isinstance(error, OutputWriteError)
+            else "Check the input and try again."
+        )
         QMessageBox.critical(
             self,
             "Could not generate PDF",
-            f"{error.public_message} Check the input and try again.",
+            f"{error.public_message} {guidance}",
         )
 
     @Slot()
     def _thread_finished(self) -> None:
         self._worker = None
         self._thread = None
+        self.generate_button.setEnabled(True)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._thread is not None:
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     @Slot()
     def open_result(self) -> None:

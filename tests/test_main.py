@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from json_to_pdf.errors import InputReadError
 from json_to_pdf.model import ConversionRequest
 from json_to_pdf.pdf import PdfValidationResult
@@ -31,6 +33,27 @@ def test_smoke_conversion_returns_one_for_typed_failure(monkeypatch, tmp_path) -
     assert __main__.main(
         ["json-to-pdf", "--smoke-convert", str(tmp_path / "missing.json"), str(tmp_path / "out.pdf")]
     ) == 1
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["json-to-pdf", "--smoke-convert"],
+        ["json-to-pdf", "--smoke-convert", "source.json"],
+        ["json-to-pdf", "--smoke-convert", "source.json", "out.pdf", "extra"],
+        ["json-to-pdf", "unexpected", "--smoke-convert", "source.json", "out.pdf"],
+    ],
+)
+def test_malformed_smoke_arguments_return_usage_without_gui(monkeypatch, argv) -> None:
+    from json_to_pdf import __main__
+
+    class WindowSpy:
+        def __init__(self) -> None:
+            raise AssertionError("malformed smoke arguments must not create a window")
+
+    monkeypatch.setattr(__main__, "MainWindow", WindowSpy)
+
+    assert __main__.main(argv) == 2
 
 
 def test_gui_path_registers_font_and_shows_window(monkeypatch) -> None:

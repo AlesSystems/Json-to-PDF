@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox
 
-from json_to_pdf.errors import InputReadError
+from json_to_pdf.errors import InputReadError, OutputWriteError
 from json_to_pdf.gui import MainWindow
 from json_to_pdf.model import ConversionRequest
 from json_to_pdf.pdf import PdfValidationResult
@@ -67,6 +67,52 @@ def test_conversion_runs_off_the_gui_thread_and_cleans_up(
     assert window.status_label.text() == "PDF generated successfully."
 
 
+def test_window_refuses_close_until_active_conversion_finishes(
+    qtbot, registered_font, monkeypatch, tmp_path
+) -> None:
+    release = Event()
+
+    def blocking_convert(request: ConversionRequest) -> PdfValidationResult:
+        release.wait(2)
+        return PdfValidationResult(1, ("Report",))
+
+    monkeypatch.setattr("json_to_pdf.gui.convert", blocking_convert)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.start_conversion(_request(tmp_path))
+
+    close_result = window.close()
+    remained_visible = window.isVisible()
+    release.set()
+    qtbot.waitUntil(lambda: window._thread is None)
+    assert not close_result
+    assert remained_visible
+    assert window.close()
+
+
+def test_generate_stays_disabled_until_thread_cleanup_boundary(
+    qtbot, registered_font, monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        "json_to_pdf.gui.convert",
+        lambda request: PdfValidationResult(1, ("Second report",)),
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.generate_button.setEnabled(False)
+    window._thread = QThread(window)
+
+    window._conversion_succeeded(PdfValidationResult(1, ("Report",)))
+
+    assert not window.generate_button.isEnabled()
+    window._thread_finished()
+    assert window.generate_button.isEnabled()
+    window.start_conversion(_request(tmp_path))
+    qtbot.waitUntil(lambda: window._thread is None)
+    assert window.status_label.text() == "PDF generated successfully."
+
+
 def test_failure_is_redacted_actionable_and_restores_controls(
     qtbot, registered_font, monkeypatch, tmp_path
 ) -> None:
@@ -91,6 +137,68 @@ def test_failure_is_redacted_actionable_and_restores_controls(
     assert window.status_label.text() == "Conversion failed."
     assert messages == [
         ("Could not generate PDF", "The JSON file could not be read. Check the input and try again."),
+    ]
+    assert "/secret/path" not in repr(messages)
+    assert "secret-value" not in repr(messages)
+
+
+def test_output_failure_advises_a_writable_destination(
+    qtbot, registered_font, monkeypatch, tmp_path
+) -> None:
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "json_to_pdf.gui.convert",
+        lambda request: (_ for _ in ()).throw(
+            OutputWriteError(ValueError("/secret/path secret-value"))
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda parent, title, text: messages.append((title, text)),
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.start_conversion(_request(tmp_path))
+    qtbot.waitUntil(lambda: window._thread is None)
+
+    assert messages == [
+        (
+            "Could not generate PDF",
+            "The PDF file could not be written. Choose a writable PDF destination and try again.",
+        )
+    ]
+    assert "/secret/path" not in repr(messages)
+    assert "secret-value" not in repr(messages)
+
+
+def test_unexpected_worker_exception_is_redacted_and_cleans_up(
+    qtbot, registered_font, monkeypatch, tmp_path
+) -> None:
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "json_to_pdf.gui.convert",
+        lambda request: (_ for _ in ()).throw(
+            RuntimeError("/secret/path secret-value")
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda parent, title, text: messages.append((title, text)),
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.start_conversion(_request(tmp_path))
+    qtbot.waitUntil(lambda: window._thread is None)
+
+    assert window.generate_button.isEnabled()
+    assert not window.open_button.isEnabled()
+    assert messages == [
+        (
+            "Could not generate PDF",
+            "The conversion could not be completed. Check the input and try again.",
+        )
     ]
     assert "/secret/path" not in repr(messages)
     assert "secret-value" not in repr(messages)
