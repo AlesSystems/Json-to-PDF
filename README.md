@@ -16,12 +16,23 @@ Native standalone builds are produced on each operating system; cross-compilatio
 
 Python 3.12 is required.
 
+macOS/Linux:
+
 ```bash
 python3.12 -m venv .venv
-source .venv/bin/activate              # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 python -m pip install -r requirements.lock
 python -m pip install -e .
 python -m json_to_pdf
+```
+
+Windows PowerShell or Command Prompt (activation is not required):
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m json_to_pdf
 ```
 
 For a non-installed checkout, use `PYTHONPATH=src python -m json_to_pdf`. On headless Linux, prefix test commands with `QT_QPA_PLATFORM=offscreen`.

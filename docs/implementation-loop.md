@@ -20,9 +20,9 @@ This is the readable operating record for the 11-task implementation, distilled 
 | 50% | Tasks 4–6: bounded loader, escaped renderer, pagination proof | task reports and repair reviews through `e5e37fd` |
 | 75% | Tasks 7–9: validated atomic output, service, accessible GUI | task reports and clean reviews through `559cfe8` |
 | 91% | Task 10: deployment spec and three-OS matrix | `4ddc2f1`, `9a50912`, `c093196`; local arm64 package proof; review clean |
-| 100% implementation scope | Task 11: usage/notices/checklist/PR trigger and final verification | Task 11 report and commits; does **not** mean release-ready |
+| 100% implementation scope | Task 11: usage/notices/checklist/PR trigger and local verification | Task 11 report and commits; final whole-branch review remains required and this does **not** mean release-ready |
 
-Each task has a brief, implementer report, coherent commit range, focused/full test evidence, and controller review in `.superpowers/sdd/implementation-plan/`. Review findings were repaired in bounded rounds before the next dependency task began.
+Each task has a brief, implementer report, coherent commit range, and focused/full test evidence in `.superpowers/sdd/implementation-plan/`. Tasks 1–10 completed their task reviews and bounded repairs; Task 11 feeds the final whole-branch review gate.
 
 ## Controller rulings
 
@@ -32,6 +32,6 @@ Each task has a brief, implementer report, coherent commit range, focused/full t
 
 ## Current `PR_READY` gates
 
-The implementation loop is not yet at `PR_READY`. The branch still requires a controller review of Task 11, a pushed pull request, passing Windows/macOS/Linux PR jobs, universal2 execution proof, complete OS-specific artifact/checklist receipts, two named-viewer inspections per OS, and an owner/qualified-counsel Qt distribution decision.
+The implementation loop is not yet at `PR_READY`. The branch still requires final whole-branch review, a pushed pull request, passing Windows/macOS/Linux PR jobs, universal2 execution proof, complete OS-specific artifact/checklist receipts, two named-viewer inspections per OS, and owner/qualified-counsel Qt and Nuitka distribution decisions.
 
 No merge, deployment, release publication, legal approval, PDF/UA conformance, universal Unicode coverage, crash durability, or cross-platform manual acceptance is claimed by this record.
