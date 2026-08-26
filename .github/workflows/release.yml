@@ -1,0 +1,53 @@
+name: Build standalone applications
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      VIRTUAL_ENV: ${{ github.workspace }}/.venv
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.lock
+      - name: Configure headless Qt on Linux
+        if: runner.os == 'Linux'
+        run: echo "QT_QPA_PLATFORM=offscreen" >> "$GITHUB_ENV"
+      - name: Run tests
+        run: python -m pytest
+      - name: Compile sources
+        run: python -m compileall -q src tests
+      - name: Build standalone application
+        run: pyside6-deploy -c pysidedeploy.spec
+      - name: Locate packaged executable
+        id: executable
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            executable="$(find dist -type f \( -name 'json-to-pdf.exe' -o -name '__main__.exe' \) -print -quit)"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            executable="$(find dist/json-to-pdf.app/Contents/MacOS -type f -perm -111 -print -quit)"
+          else
+            executable="$(find dist -type f \( -name 'json-to-pdf.bin' -o -name '__main__.bin' \) -print -quit)"
+          fi
+          test -n "$executable" && test -f "$executable"
+          echo "path=$executable" >> "$GITHUB_OUTPUT"
+      - name: Run packaged smoke conversion
+        run: '"${{ steps.executable.outputs.path }}" --smoke-convert tests/fixtures/student-report.json packaged-report.pdf'
+      - name: Validate packaged PDF
+        run: >-
+          python -c "from pypdf import PdfReader; r=PdfReader('packaged-report.pdf', strict=True); assert len(r.pages)>0; assert 'Başarılı' in ''.join(p.extract_text() or '' for p in r.pages)"
