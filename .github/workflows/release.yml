@@ -115,7 +115,7 @@ jobs:
             archive="json-to-pdf-macos-universal2.tar.gz"
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
             artifact_root="$(dirname "$EXECUTABLE_PATH")"
-            archive="json-to-pdf-windows-x86_64.zip"
+            archive="json-to-pdf-windows-x86_64.tar.gz"
           else
             artifact_root="$(dirname "$EXECUTABLE_PATH")"
             archive="json-to-pdf-linux-x86_64.tar.gz"
@@ -123,11 +123,7 @@ jobs:
           test -d "$artifact_root"
           parent="$(dirname "$artifact_root")"
           leaf="$(basename "$artifact_root")"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            tar -a -c -f "$archive" -C "$parent" "$leaf"
-          else
-            tar -czf "$archive" -C "$parent" "$leaf"
-          fi
+          tar -czf "$archive" -C "$parent" "$leaf"
           echo "path=$archive" >> "$GITHUB_OUTPUT"
       - name: Create SHA-256 manifest
         env:

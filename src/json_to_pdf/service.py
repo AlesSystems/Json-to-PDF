@@ -17,17 +17,17 @@ def convert(
     limits: ResourceLimits = DEFAULT_LIMITS,
     generated_on: date | None = None,
 ) -> PdfValidationResult:
-    source = request.source.resolve(strict=False)
-    destination = request.destination.resolve(strict=False)
-    if source == destination:
-        raise PolicyError()
     try:
+        source = request.source.resolve(strict=False)
+        destination = request.destination.resolve(strict=False)
+        if source == destination:
+            raise PolicyError()
         if source.exists() and destination.exists() and os.path.samefile(
             source, destination
         ):
             raise PolicyError()
-    except OSError:
-        pass
+    except (OSError, ValueError, RuntimeError) as error:
+        raise PolicyError(cause=error) from error
     document = load_json(request.source, limits)
     title = (
         request.title.strip()
