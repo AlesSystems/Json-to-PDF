@@ -36,7 +36,8 @@ def _normalized(text: str) -> str:
 def _measure_pages(html: str) -> tuple[int, float, QRectF]:
     printer = QPrinter(QPrinter.PrinterMode.HighResolution)
     printer.setResolution(72)
-    printer.setPageLayout(
+    printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+    assert printer.setPageLayout(
         QPageLayout(
             QPageSize(QPageSize.PageSizeId.A4),
             QPageLayout.Orientation.Portrait,
@@ -182,6 +183,7 @@ def test_measured_exact_last_page_boundary_has_no_trailing_page(
     tmp_path, registered_font
 ) -> None:
     output = tmp_path / "boundary.pdf"
+    overflow_output = tmp_path / "boundary-overflow.pdf"
     previous = ""
     for rows in range(100):
         candidate = (
@@ -201,8 +203,10 @@ def test_measured_exact_last_page_boundary_has_no_trailing_page(
     assert 0 <= body_height - last_block.bottom() < last_block.height()
 
     count = _paint_document(previous, output, METADATA)
+    overflow_count = _paint_document(candidate, overflow_output, METADATA)
     reader, text = _read(output)
     assert len(reader.pages) == count == 1
+    assert len(PdfReader(overflow_output, strict=True).pages) == overflow_count == 2
     assert "LAST-BOUNDARY" in text[-1]
     assert _normalized(text[-1]).count("Page 1 of 1") == 1
 
