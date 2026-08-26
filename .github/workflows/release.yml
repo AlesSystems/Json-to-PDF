@@ -4,6 +4,7 @@ on:
   pull_request:
   workflow_dispatch:
   push:
+    # Bootstrap this workflow from repository-owned branches before it reaches default.
     branches: ["codex/**"]
     tags: ["v*"]
 
