@@ -1,0 +1,37 @@
+{
+  "correctCount": 18,
+  "message": "Başarılı",
+  "passed": true,
+  "score": 90.0,
+  "subjectAnalysis": [
+    {"subject": "Donanım", "correct": 9, "wrong": 1, "score": 90},
+    {"subject": "Yazılım", "correct": 9, "wrong": 1, "score": 90}
+  ],
+  "totalQuestions": 20,
+  "wrongAnswers": [
+    {
+      "question": "Bir bilgisayar ağında güvenli iletişimi sağlamak için kullanılan yöntemi açıklayan uzun ve sentetik soru metni bir.",
+      "userAnswer": "Şifrelenmemiş bağlantı kullanılır.",
+      "correctAnswer": "Aktarım sırasında güçlü şifreleme kullanılır.",
+      "userAnswerImage": null,
+      "correctAnswerImage": null,
+      "solution": null
+    },
+    {
+      "question": "İşletim sisteminin kaynakları süreçler arasında paylaştırma görevini anlatan uzun ve sentetik soru metni iki.",
+      "userAnswer": "Yalnızca dosya adlarını değiştirir.",
+      "correctAnswer": "İşlemci, bellek ve giriş çıkış kaynaklarını yönetir.",
+      "userAnswerImage": null,
+      "correctAnswerImage": null,
+      "solution": null
+    },
+    {
+      "question": "Veri tabanında tutarlılığı koruyan işlem özelliklerini sorgulayan uzun ve sentetik soru metni üç.",
+      "userAnswer": "Her kayıt birbirinden bağımsız silinir.",
+      "correctAnswer": "İşlemler atomiklik ve tutarlılık ilkelerini korur. SON-KAYIT-İŞARETİ-8",
+      "userAnswerImage": null,
+      "correctAnswerImage": null,
+      "solution": null
+    }
+  ]
+}
