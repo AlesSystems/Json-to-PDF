@@ -32,3 +32,16 @@ def test_macos_normalizes_and_verifies_signature_before_smoke() -> None:
     verify = WORKFLOW.index("codesign --verify --deep --strict dist/json-to-pdf.app")
     smoke = WORKFLOW.index("Run packaged smoke conversion")
     assert clear < sign < remove_after_sign < verify < smoke
+
+
+def test_validated_application_is_archived_hashed_and_uploaded_with_pdf_receipt() -> None:
+    validation = WORKFLOW.index("Validate packaged PDF")
+    archive = WORKFLOW.index("Archive validated application")
+    manifest = WORKFLOW.index("Create SHA-256 manifest")
+    upload = WORKFLOW.index("actions/upload-artifact@v4")
+    assert validation < archive < manifest < upload
+    assert "dist/json-to-pdf-arm64.app" not in WORKFLOW[archive:]
+    assert "dist/json-to-pdf-x86_64.app" not in WORKFLOW[archive:]
+    assert "packaged-report.pdf" in WORKFLOW[upload:]
+    assert "artifact-sha256.txt" in WORKFLOW[upload:]
+    assert "$GITHUB_STEP_SUMMARY" in WORKFLOW[manifest:upload]

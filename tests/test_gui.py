@@ -3,10 +3,18 @@ from threading import Event
 
 from PySide6.QtCore import Qt, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QWidget
 
 from json_to_pdf.errors import InputReadError, OutputWriteError
 from json_to_pdf.gui import MainWindow
+
+
+def test_main_window_honors_parent_ownership(qtbot, registered_font) -> None:
+    parent = QWidget()
+    window = MainWindow(parent)
+    qtbot.addWidget(parent)
+
+    assert window.parent() is parent
 from json_to_pdf.model import ConversionRequest
 from json_to_pdf.pdf import PdfValidationResult
 

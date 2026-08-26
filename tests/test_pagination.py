@@ -120,19 +120,42 @@ def test_footer_geometry_reserves_margin_gap_and_band(
     mm = 72 / 25.4
     paint_margin = 18 * mm
     assert tuple(map(float, reader.pages[0].mediabox)) == (0.0, 0.0, 595.0, 842.0)
-    assert footer.left() == pytest.approx(paint_margin, abs=0.5)
-    assert footer.right() == pytest.approx(595 - paint_margin, abs=0.5)
+    assert footer.left() == pytest.approx(0, abs=0.5)
+    assert footer.right() == pytest.approx(595 - 2 * paint_margin, abs=0.5)
     assert footer.height() == pytest.approx(7 * mm)
-    assert footer.bottom() == pytest.approx(842 - paint_margin, abs=0.5)
-    body_origin = next((dx, dy) for dx, dy in translations if dx > 0 and dy > 0)
-    assert body_origin[0] == pytest.approx(paint_margin, abs=0.5)
-    assert body_origin[1] == pytest.approx(paint_margin, abs=0.5)
+    assert footer.bottom() == pytest.approx(842 - 2 * paint_margin, abs=0.5)
+    body_origin = translations[0]
+    assert body_origin[0] == pytest.approx(0, abs=0.5)
+    assert body_origin[1] == pytest.approx(0, abs=0.5)
     body_height = -max(dy for _, dy in translations if dy < 0)
     body_bottom = body_origin[1] + body_height
     assert footer.top() - body_bottom == pytest.approx(3 * mm)
     token_lines = [line for line in text[0].splitlines() if set(line) == {"W"}]
     assert "".join(token_lines) == token
     assert len(token_lines) >= 2
+
+
+def test_pdf_text_positions_use_one_physical_margin_and_reserved_footer(
+    tmp_path, registered_font
+) -> None:
+    output = tmp_path / "physical-geometry.pdf"
+    _paint_document("<p>BODY-POSITION</p>", output, METADATA)
+    positions = {}
+
+    def visitor(text, cm, tm, font, font_size):
+        normalized = " ".join(text.split())
+        if normalized in {"BODY-POSITION", "Page 1 of 1"}:
+            positions[normalized] = (cm[4] + tm[4], cm[5] - tm[5], font_size)
+
+    PdfReader(output).pages[0].extract_text(visitor_text=visitor)
+    mm = 72 / 25.4
+    body_x, body_y, _ = positions["BODY-POSITION"]
+    footer_x, footer_y, footer_size = positions["Page 1 of 1"]
+    assert body_x == pytest.approx(18 * mm, abs=2)
+    assert body_y > 18 * mm + (7 + 3) * mm
+    assert footer_x >= 18 * mm
+    assert footer_x <= 595 - 18 * mm - 40
+    assert 18 * mm <= footer_y <= (18 + 7) * mm + 3
 
 
 def test_real_renderer_typography_paginates_with_footer(

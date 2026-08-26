@@ -47,3 +47,30 @@ def test_failed_registration_leaves_font_unregistered(qapp, monkeypatch) -> None
 
     with pytest.raises(RuntimeError, match="is not registered"):
         require_supported_text(["A"])
+
+
+def test_modified_but_valid_font_is_rejected_before_registration(
+    qapp, monkeypatch, tmp_path
+) -> None:
+    modified = tmp_path / "modified.ttf"
+    modified.write_bytes(FONT.read_bytes() + b"benign trailing byte")
+    assert QRawFont(str(modified), 10.0).isValid()
+    registration_attempts = []
+
+    class Resource:
+        def joinpath(self, _relative):
+            return modified
+
+    monkeypatch.setattr(font_module, "files", lambda _package: Resource())
+    monkeypatch.setattr(
+        font_module.QFontDatabase,
+        "addApplicationFont",
+        lambda path: registration_attempts.append(path),
+    )
+
+    with pytest.raises(RuntimeError, match="could not be loaded"):
+        register_bundled_font()
+
+    assert registration_attempts == []
+    with pytest.raises(RuntimeError, match="is not registered"):
+        require_supported_text(["A"])

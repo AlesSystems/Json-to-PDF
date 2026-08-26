@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader
 
-from json_to_pdf.errors import ResourceLimitError, UnsupportedCharacterError
+from json_to_pdf.errors import PolicyError, ResourceLimitError, UnsupportedCharacterError
 from json_to_pdf.limits import ResourceLimits
 from json_to_pdf.loader import load_json
 from json_to_pdf.model import ConversionRequest
@@ -41,6 +41,44 @@ FORBIDDEN_PDF_NAMES = {
     "/JavaScript",
     "/JS",
 }
+
+
+def test_convert_rejects_same_source_and_destination_without_changing_source(
+    tmp_path, registered_font
+) -> None:
+    source = tmp_path / "source.json"
+    original = b'{"result":"unchanged"}'
+    source.write_bytes(original)
+
+    with pytest.raises(PolicyError) as caught:
+        convert(ConversionRequest(source, tmp_path / "." / "source.json"))
+
+    assert str(caught.value) == PolicyError.public_message
+    assert str(source) not in str(caught.value)
+    assert source.read_bytes() == original
+
+
+def test_convert_rejects_existing_file_alias_without_changing_source(
+    tmp_path, registered_font
+) -> None:
+    source = tmp_path / "source.json"
+    alias = tmp_path / "alias.pdf"
+    original = b'{"result":"unchanged"}'
+    source.write_bytes(original)
+    try:
+        os.link(source, alias)
+    except OSError:
+        try:
+            alias.symlink_to(source)
+        except OSError:
+            pytest.skip("filesystem does not support hardlinks or symlinks")
+
+    with pytest.raises(PolicyError) as caught:
+        convert(ConversionRequest(source, alias))
+
+    assert str(caught.value) == PolicyError.public_message
+    assert str(source) not in str(caught.value)
+    assert source.read_bytes() == original
 
 
 def _searchable(text: str) -> str:
