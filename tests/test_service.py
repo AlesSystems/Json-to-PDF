@@ -81,6 +81,52 @@ def test_convert_rejects_existing_file_alias_without_changing_source(
     assert source.read_bytes() == original
 
 
+@pytest.mark.parametrize("nul_in", ["source", "destination"])
+def test_convert_redacts_embedded_nul_identity_failures(
+    tmp_path, registered_font, nul_in
+) -> None:
+    source = tmp_path / "source.json"
+    destination = tmp_path / "report.pdf"
+    original = b'{"result":"unchanged"}'
+    source.write_bytes(original)
+    invalid = Path("internal-secret\0path")
+    request = ConversionRequest(
+        invalid if nul_in == "source" else source,
+        invalid if nul_in == "destination" else destination,
+    )
+
+    with pytest.raises(PolicyError) as caught:
+        convert(request)
+
+    assert str(caught.value) == PolicyError.public_message
+    assert "internal-secret" not in str(caught.value)
+    assert source.read_bytes() == original
+    assert not destination.exists()
+
+
+def test_convert_fails_closed_when_samefile_inspection_fails(
+    tmp_path, registered_font, monkeypatch
+) -> None:
+    source = tmp_path / "source.json"
+    destination = tmp_path / "existing.pdf"
+    original = b'{"result":"unchanged"}'
+    source.write_bytes(original)
+    destination.write_bytes(b"existing destination")
+
+    def fail_samefile(*_args):
+        raise OSError("internal path inspection detail")
+
+    monkeypatch.setattr(os.path, "samefile", fail_samefile)
+    with pytest.raises(PolicyError) as caught:
+        convert(ConversionRequest(source, destination))
+
+    assert str(caught.value) == PolicyError.public_message
+    assert "internal path" not in str(caught.value)
+    assert isinstance(caught.value.cause, OSError)
+    assert source.read_bytes() == original
+    assert destination.read_bytes() == b"existing destination"
+
+
 def _searchable(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).split())
 

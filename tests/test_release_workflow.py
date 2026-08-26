@@ -45,3 +45,8 @@ def test_validated_application_is_archived_hashed_and_uploaded_with_pdf_receipt(
     assert "packaged-report.pdf" in WORKFLOW[upload:]
     assert "artifact-sha256.txt" in WORKFLOW[upload:]
     assert "$GITHUB_STEP_SUMMARY" in WORKFLOW[manifest:upload]
+    archive_contract = WORKFLOW[archive:manifest]
+    assert "json-to-pdf-windows-x86_64.tar.gz" in archive_contract
+    assert ".zip" not in archive_contract
+    assert "tar -a" not in archive_contract
+    assert archive_contract.count('tar -czf "$archive"') == 1
