@@ -264,9 +264,9 @@ Accessibility scope is honest: logical H1/H2/H3 order, at least 10 pt body text,
 
 `pyside6-deploy -c pysidedeploy.spec` builds `standalone` artifacts so Qt libraries remain separate rather than statically fused. `.gitignore` must explicitly unignore `pysidedeploy.spec`. The spec includes the font and license assets; unspecified icons and build-wrapper scripts are excluded.
 
-CI uses `windows-latest`, `macos-14`, and `ubuntu-24.04`, runs unit/integration tests, builds on that OS, runs the packaged `--smoke-convert`, and validates the resulting PDF. Release artifacts include `THIRD_PARTY_NOTICES.md`, the font OFL, and applicable Qt/PySide6/pypdf/Python notices.
+CI uses `windows-latest`, `macos-14`, and `ubuntu-24.04`, runs unit/integration tests, builds on that OS, runs the packaged `--smoke-convert`, and validates the resulting PDF. Only after validation, CI archives the final native app/output directory and uploads it with a SHA-256 manifest and the validated PDF receipt. Release artifacts include `THIRD_PARTY_NOTICES.md`, the font OFL, and applicable Qt/PySide6/pypdf/Python notices.
 
-Qt community packages are LGPLv3/GPLv3/commercial-licensed. The implementation must document the selected distribution path and obtain project-owner/legal review of release packaging; this architecture is engineering guidance, not legal advice.
+Qt community packages are LGPLv3/GPLv3/commercial-licensed, while PySide6 also lists a GPLv2 alternative. Nuitka is AGPLv3 with its stated runtime exception. The implementation must document the selected distribution path and obtain project-owner or qualified-counsel review of release packaging; this architecture records engineering gates and is not legal advice.
 
 ## Primary references
 

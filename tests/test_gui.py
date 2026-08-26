@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 
 from json_to_pdf.errors import InputReadError, OutputWriteError
 from json_to_pdf.gui import MainWindow
+from json_to_pdf.model import ConversionRequest
+from json_to_pdf.pdf import PdfValidationResult
 
 
 def test_main_window_honors_parent_ownership(qtbot, registered_font) -> None:
@@ -15,8 +17,6 @@ def test_main_window_honors_parent_ownership(qtbot, registered_font) -> None:
     qtbot.addWidget(parent)
 
     assert window.parent() is parent
-from json_to_pdf.model import ConversionRequest
-from json_to_pdf.pdf import PdfValidationResult
 
 
 def _request(tmp_path: Path) -> ConversionRequest:
