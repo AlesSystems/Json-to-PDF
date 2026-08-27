@@ -1,0 +1,149 @@
+name: Build standalone applications
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    # Bootstrap this workflow from repository-owned branches before it reaches default.
+    branches: ["codex/**"]
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      VIRTUAL_ENV: ${{ github.workspace }}/.venv
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.lock
+      - name: Configure headless Qt on Linux
+        if: runner.os == 'Linux'
+        run: echo "QT_QPA_PLATFORM=offscreen" >> "$GITHUB_ENV"
+      - name: Run tests
+        run: python -m pytest
+      - name: Compile sources
+        run: python -m compileall -q src tests
+      - name: Build standalone application
+        run: |
+          if [[ "$RUNNER_OS" != "macOS" ]]; then
+            pyside6-deploy -c pysidedeploy.spec
+            exit
+          fi
+
+          python_archs="$(lipo -archs "$(command -v python)")"
+          grep -qw arm64 <<< "$python_archs"
+          grep -qw x86_64 <<< "$python_archs"
+          arch -arm64 python -c "import platform; assert platform.machine() == 'arm64'"
+          arch -x86_64 python -c "import platform; assert platform.machine() == 'x86_64'"
+          cp pysidedeploy.spec "$RUNNER_TEMP/pysidedeploy.spec"
+
+          arch -arm64 pyside6-deploy -c pysidedeploy.spec
+          test -d dist/json-to-pdf.app
+          mv dist/json-to-pdf.app dist/json-to-pdf-arm64.app
+          cp "$RUNNER_TEMP/pysidedeploy.spec" pysidedeploy.spec
+
+          arch -x86_64 pyside6-deploy -c pysidedeploy.spec
+          test -d dist/json-to-pdf.app
+          mv dist/json-to-pdf.app dist/json-to-pdf-x86_64.app
+          cp -R dist/json-to-pdf-arm64.app dist/json-to-pdf.app
+          while IFS= read -r -d '' arm_file; do
+            file "$arm_file" | grep -q 'Mach-O' || continue
+            relative="${arm_file#dist/json-to-pdf-arm64.app/}"
+            x86_file="dist/json-to-pdf-x86_64.app/$relative"
+            output_file="dist/json-to-pdf.app/$relative"
+            arm_archs="$(lipo -archs "$arm_file")"
+            grep -qw arm64 <<< "$arm_archs"
+            if grep -qw x86_64 <<< "$arm_archs"; then
+              continue
+            fi
+            test -f "$x86_file"
+            lipo -archs "$x86_file" | grep -qw x86_64
+            lipo -create "$arm_file" "$x86_file" -output "$output_file"
+          done < <(find dist/json-to-pdf-arm64.app -type f -print0)
+      - name: Normalize and verify macOS signature
+        if: runner.os == 'macOS'
+        run: |
+          xattr -cr dist/json-to-pdf.app
+          xattr -d com.apple.FinderInfo dist/json-to-pdf.app 2>/dev/null || true
+          codesign --force --deep --sign - dist/json-to-pdf.app
+          xattr -d com.apple.FinderInfo dist/json-to-pdf.app 2>/dev/null || true
+          codesign --verify --deep --strict dist/json-to-pdf.app
+      - name: Verify universal2 macOS artifact
+        if: runner.os == 'macOS'
+        run: |
+          while IFS= read -r -d '' file; do
+            if file "$file" | grep -q 'Mach-O'; then
+              archs="$(lipo -archs "$file")"
+              grep -qw arm64 <<< "$archs"
+              grep -qw x86_64 <<< "$archs"
+            fi
+          done < <(find dist/json-to-pdf.app -type f -print0)
+      - name: Locate packaged executable
+        id: executable
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            executable="$(find dist -type f \( -name 'json-to-pdf.exe' -o -name '__main__.exe' \) -print -quit)"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            executable="$(find dist/json-to-pdf.app/Contents/MacOS -type f -perm -111 -print -quit)"
+          else
+            executable="$(find dist -type f \( -name 'json-to-pdf.bin' -o -name '__main__.bin' \) -print -quit)"
+          fi
+          test -n "$executable" && test -f "$executable"
+          echo "path=$executable" >> "$GITHUB_OUTPUT"
+      - name: Run packaged smoke conversion
+        run: '"${{ steps.executable.outputs.path }}" --smoke-convert tests/fixtures/student-report.json packaged-report.pdf'
+      - name: Validate packaged PDF
+        run: >-
+          python -c "from pypdf import PdfReader; r=PdfReader('packaged-report.pdf', strict=True); assert len(r.pages)>0; assert 'Başarılı' in ''.join(p.extract_text() or '' for p in r.pages)"
+      - name: Archive validated application
+        id: archive
+        env:
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            artifact_root="dist/json-to-pdf.app"
+            archive="json-to-pdf-macos-universal2.tar.gz"
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            artifact_root="$(dirname "$EXECUTABLE_PATH")"
+            archive="json-to-pdf-windows-x86_64.tar.gz"
+          else
+            artifact_root="$(dirname "$EXECUTABLE_PATH")"
+            archive="json-to-pdf-linux-x86_64.tar.gz"
+          fi
+          test -d "$artifact_root"
+          parent="$(dirname "$artifact_root")"
+          leaf="$(basename "$artifact_root")"
+          tar -czf "$archive" -C "$parent" "$leaf"
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+      - name: Create SHA-256 manifest
+        env:
+          ARCHIVE_PATH: ${{ steps.archive.outputs.path }}
+        run: |
+          python -c "import hashlib, os, pathlib; p=pathlib.Path(os.environ['ARCHIVE_PATH']); pathlib.Path('artifact-sha256.txt').write_text(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n', encoding='ascii')"
+          {
+            echo "### Packaged artifact receipt"
+            echo '```text'
+            cat artifact-sha256.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload packaged artifact and validation receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-to-pdf-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ steps.archive.outputs.path }}
+            artifact-sha256.txt
+            packaged-report.pdf
+          if-no-files-found: error

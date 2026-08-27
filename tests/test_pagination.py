@@ -1,0 +1,277 @@
+import re
+from datetime import date
+
+import pytest
+from PySide6.QtCore import QMarginsF, QRectF
+from PySide6.QtGui import (
+    QFont,
+    QPageLayout,
+    QPageSize,
+    QPainter,
+    QTextDocument,
+    QTextOption,
+)
+from PySide6.QtPrintSupport import QPrinter
+from pypdf import PdfReader
+
+from json_to_pdf.errors import RenderError, ResourceLimitError
+from json_to_pdf.font import FONT_FAMILY
+from json_to_pdf.limits import ResourceLimits
+from json_to_pdf.pdf import PdfMetadata, _paint_document
+from json_to_pdf.render import RenderContext, render_html
+
+
+METADATA = PdfMetadata("Title", "fixture.json", date(2026, 8, 26))
+
+
+def _read(output):
+    reader = PdfReader(output, strict=True)
+    return reader, [page.extract_text() or "" for page in reader.pages]
+
+
+def _normalized(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
+
+
+def _measure_pages(html: str) -> tuple[int, float, QRectF]:
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    printer.setResolution(72)
+    printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+    assert printer.setPageLayout(
+        QPageLayout(
+            QPageSize(QPageSize.PageSizeId.A4),
+            QPageLayout.Orientation.Portrait,
+            QMarginsF(18, 18, 18, 18),
+            QPageLayout.Unit.Millimeter,
+        )
+    )
+    paint = printer.pageLayout().paintRectPixels(printer.resolution())
+    body_height = paint.height() - 10 * printer.resolution() / 25.4
+    document = QTextDocument()
+    document.setDefaultFont(QFont(FONT_FAMILY, 10))
+    option = document.defaultTextOption()
+    option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    document.setDefaultTextOption(option)
+    document.setDocumentMargin(0)
+    document.setHtml(html)
+    document.documentLayout().setPaintDevice(printer)
+    document.setPageSize(QRectF(0, 0, paint.width(), body_height).size())
+    document.documentLayout().documentSize()
+    last_block = document.documentLayout().blockBoundingRect(document.lastBlock())
+    return document.pageCount(), body_height, last_block
+
+
+def test_footer_pagination_has_no_extra_page(tmp_path, registered_font) -> None:
+    html = (
+        "<h1>FIRST-SENTINEL</h1>"
+        + "<p>Long Turkish text ÇĞİÖŞÜ.</p>" * 700
+        + "<p>LAST-SENTINEL</p>"
+    )
+    output = tmp_path / "pages.pdf"
+    count = _paint_document(html, output, METADATA)
+    reader, text = _read(output)
+    assert len(reader.pages) == count >= 2
+    assert "FIRST-SENTINEL" in text[0]
+    assert "LAST-SENTINEL" in text[-1]
+    assert [
+        f"Page {i} of {count}" in _normalized(page)
+        for i, page in enumerate(text, 1)
+    ] == [True] * count
+
+
+def test_one_page_has_one_footer_and_a4_media_box(tmp_path, registered_font) -> None:
+    output = tmp_path / "one.pdf"
+    count = _paint_document("<p>ONLY-SENTINEL</p>", output, METADATA)
+    reader, text = _read(output)
+    assert count == len(reader.pages) == 1
+    assert "ONLY-SENTINEL" in text[0]
+    assert _normalized(text[0]).count("Page 1 of 1") == 1
+    assert tuple(map(float, reader.pages[0].mediabox)) == (0.0, 0.0, 595.0, 842.0)
+    fonts = reader.pages[0]["/Resources"]["/Font"].get_object().values()
+    assert all("NotoSans" in font.get_object()["/BaseFont"] for font in fonts)
+
+
+def test_footer_geometry_reserves_margin_gap_and_band(
+    tmp_path, registered_font, monkeypatch
+) -> None:
+    footer_rects = []
+    translations = []
+
+    class GeometryPainter(QPainter):
+        def translate(self, dx, dy):
+            translations.append((float(dx), float(dy)))
+            return super().translate(dx, dy)
+
+        def drawText(self, rect, flags, text):
+            if text.startswith("Page "):
+                footer_rects.append(rect)
+            return super().drawText(rect, flags, text)
+
+    monkeypatch.setattr("json_to_pdf.pdf.QPainter", GeometryPainter)
+    output = tmp_path / "geometry.pdf"
+    token = "W" * 80
+    _paint_document(
+        "<p>" + token + "</p>" + "<p>geometry row</p>" * 100,
+        output,
+        METADATA,
+    )
+    reader, text = _read(output)
+    footer = footer_rects[0]
+    mm = 72 / 25.4
+    paint_margin = 18 * mm
+    assert tuple(map(float, reader.pages[0].mediabox)) == (0.0, 0.0, 595.0, 842.0)
+    assert footer.left() == pytest.approx(0, abs=0.5)
+    assert footer.right() == pytest.approx(595 - 2 * paint_margin, abs=0.5)
+    assert footer.height() == pytest.approx(7 * mm)
+    assert footer.bottom() == pytest.approx(842 - 2 * paint_margin, abs=0.5)
+    body_origin = translations[0]
+    assert body_origin[0] == pytest.approx(0, abs=0.5)
+    assert body_origin[1] == pytest.approx(0, abs=0.5)
+    body_height = -max(dy for _, dy in translations if dy < 0)
+    body_bottom = body_origin[1] + body_height
+    assert footer.top() - body_bottom == pytest.approx(3 * mm)
+    token_lines = [line for line in text[0].splitlines() if set(line) == {"W"}]
+    assert "".join(token_lines) == token
+    assert len(token_lines) >= 2
+
+
+def test_pdf_text_positions_use_one_physical_margin_and_reserved_footer(
+    tmp_path, registered_font
+) -> None:
+    output = tmp_path / "physical-geometry.pdf"
+    _paint_document("<p>BODY-POSITION</p>", output, METADATA)
+    positions = {}
+
+    def visitor(text, cm, tm, font, font_size):
+        normalized = " ".join(text.split())
+        if normalized in {"BODY-POSITION", "Page 1 of 1"}:
+            positions[normalized] = (cm[4] + tm[4], cm[5] - tm[5], font_size)
+
+    PdfReader(output).pages[0].extract_text(visitor_text=visitor)
+    mm = 72 / 25.4
+    body_x, body_y, _ = positions["BODY-POSITION"]
+    footer_x, footer_y, footer_size = positions["Page 1 of 1"]
+    assert body_x == pytest.approx(18 * mm, abs=2)
+    assert body_y > 18 * mm + (7 + 3) * mm
+    assert footer_x >= 18 * mm
+    assert footer_x <= 595 - 18 * mm - 40
+    assert 18 * mm <= footer_y <= (18 + 7) * mm + 3
+
+
+def test_real_renderer_typography_paginates_with_footer(
+    tmp_path, registered_font
+) -> None:
+    context = RenderContext("Rendered title", "rendered.json", METADATA.generated_on)
+    html = render_html(
+        {"turkish_text": "ÇĞİÖŞÜ " * 400},
+        context,
+    )
+    assert "line-height: 135%" in html
+    output = tmp_path / "rendered.pdf"
+    count = _paint_document(html, output, METADATA)
+    reader, text = _read(output)
+    assert len(reader.pages) == count >= 2
+    first_page = _normalized(text[0])
+    assert "Rendered title" in first_page
+    assert "rendered.json" in first_page
+    assert f"Page {count} of {count}" in _normalized(text[-1])
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "<p>" + "W" * 80 + "</p>",
+        "<table><tr><th>A</th><th>B</th><th>C</th><th>D</th></tr>"
+        "<tr><td>alpha</td><td>beta</td><td>gamma</td><td>delta</td></tr></table>",
+        '<div class="record-card"><h2>Record 1</h2><p>card value</p></div>',
+        "<p>Çok uzun Türkçe anlatım: çğıöşü İstanbul.</p>" * 120,
+    ],
+    ids=["unbroken-token", "four-column-table", "record-card", "turkish-prose"],
+)
+def test_adversarial_content_reaches_last_page_without_blank_page(
+    tmp_path, registered_font, fragment
+) -> None:
+    output = tmp_path / "adversarial.pdf"
+    count = _paint_document(
+        "<p>FIRST-EDGE</p>" + fragment + "<p>LAST-EDGE</p>", output, METADATA
+    )
+    reader, text = _read(output)
+    assert len(reader.pages) == count
+    assert all(page.strip() for page in text)
+    assert "FIRST-EDGE" in text[0]
+    assert "LAST-EDGE" in text[-1]
+
+
+def test_measured_exact_last_page_boundary_has_no_trailing_page(
+    tmp_path, registered_font
+) -> None:
+    output = tmp_path / "boundary.pdf"
+    overflow_output = tmp_path / "boundary-overflow.pdf"
+    previous = ""
+    for rows in range(100):
+        candidate = (
+            "<style>p { margin: 0; }</style><p>FIRST-BOUNDARY</p>"
+            + "<p>boundary row</p>" * rows
+            + "<p>LAST-BOUNDARY</p>"
+        )
+        if _measure_pages(candidate)[0] > 1:
+            break
+        previous = candidate
+    else:
+        pytest.fail("Qt layout did not reach the page boundary")
+
+    pages, body_height, last_block = _measure_pages(previous)
+    next_pages, _, _ = _measure_pages(candidate)
+    assert pages == 1 and next_pages == 2
+    assert 0 <= body_height - last_block.bottom() < last_block.height()
+
+    count = _paint_document(previous, output, METADATA)
+    overflow_count = _paint_document(candidate, overflow_output, METADATA)
+    reader, text = _read(output)
+    assert len(reader.pages) == count == 1
+    assert len(PdfReader(overflow_output, strict=True).pages) == overflow_count == 2
+    assert "LAST-BOUNDARY" in text[-1]
+    assert _normalized(text[-1]).count("Page 1 of 1") == 1
+
+
+def test_rejects_document_over_page_limit(tmp_path, registered_font) -> None:
+    with pytest.raises(ResourceLimitError):
+        _paint_document(
+            "<p>too many pages</p>" * 100,
+            tmp_path / "limited.pdf",
+            METADATA,
+            ResourceLimits(max_pages=1),
+        )
+
+
+def test_rejects_painter_begin_failure(tmp_path, registered_font, monkeypatch) -> None:
+    class BeginFailure(QPainter):
+        def begin(self, device) -> bool:
+            return False
+
+    monkeypatch.setattr("json_to_pdf.pdf.QPainter", BeginFailure)
+    with pytest.raises(RenderError):
+        _paint_document("<p>content</p>", tmp_path / "begin.pdf", METADATA)
+
+
+def test_rejects_painter_end_failure(tmp_path, registered_font, monkeypatch) -> None:
+    class EndFailure(QPainter):
+        def end(self) -> bool:
+            super().end()
+            return False
+
+    monkeypatch.setattr("json_to_pdf.pdf.QPainter", EndFailure)
+    with pytest.raises(RenderError):
+        _paint_document("<p>content</p>", tmp_path / "end.pdf", METADATA)
+
+
+def test_rejects_new_page_failure(tmp_path, registered_font, monkeypatch) -> None:
+    class NewPageFailure(QPrinter):
+        def newPage(self) -> bool:
+            return False
+
+    monkeypatch.setattr("json_to_pdf.pdf.QPrinter", NewPageFailure)
+    with pytest.raises(RenderError):
+        _paint_document(
+            "<p>content</p>" * 100, tmp_path / "new-page.pdf", METADATA
+        )
